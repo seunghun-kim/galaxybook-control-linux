@@ -16,7 +16,7 @@ public:
     bool isValidValue(int value) const;
     QString getMonitoringFilePath() const;
     
-    // attribute name getter
+    // Attribute name getter
     QString getAttributeName() const { return attribute_name_; }
 
 private:

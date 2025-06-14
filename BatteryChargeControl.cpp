@@ -18,7 +18,7 @@ void BatteryChargeControl::setChargeEndThreshold(int threshold)
         throw UnsupportedFeatureException("Battery charge control is not supported on this device");
     }
     
-    // 값 범위 검증 (1-100)
+    // Validate value range (1-100)
     if (threshold < 1 || threshold > 100)
     {
         throw UnsupportedFeatureException("Charge end threshold must be between 1 and 100");
@@ -40,7 +40,7 @@ int BatteryChargeControl::getChargeEndThreshold()
     }
     
     QFile file(base_path + "/charge_control_end_threshold");
-    int threshold = 100; // 기본값
+    int threshold = 100; // Default value
     if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
         QTextStream in(&file);
         in >> threshold;

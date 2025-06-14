@@ -30,12 +30,7 @@ public slots:
     void onCboxBlockRecordingStateChanged(int state);
 
     // File change monitoring slots
-    void onBrightnessFileChanged(const QString &path);
-    void onPerformanceModeFileChanged(const QString &path);
-    void onBatteryChargeEndThresholdFileChanged(const QString &path);
-    void onPowerOnLidOpenFileChanged(const QString &path);
-    void onUsbChargingFileChanged(const QString &path);
-    void onBlockRecordingFileChanged(const QString &path);
+    void onFileChanged(const QString &path);
 
 private:
     Ui::MainWindow *ui;
@@ -55,8 +50,7 @@ private:
     // Generic function to setup checkbox-based firmware attributes
     bool setupUiFirmwareAttribute(FirmwareAttribute& attribute, 
                                  QCheckBox* checkbox, 
-                                 void(MainWindow::*stateChangeSlot)(int),
-                                 void(MainWindow::*fileChangeSlot)(const QString&));
+                                 void(MainWindow::*stateChangeSlot)(int));
     
     // Generic function to handle file changes for firmware attributes
     void handleFirmwareAttributeFileChanged(const QString &path, 

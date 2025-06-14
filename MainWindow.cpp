@@ -10,12 +10,16 @@
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow)
-    , fileWatcher(nullptr)
+    , fileWatcher(new QFileSystemWatcher(this))
     , power_on_lid_open("power_on_lid_open")
     , usb_charging("usb_charging")
     , block_recording("block_recording")
 {
     ui->setupUi(this);
+
+    // Connect fileWatcher signal (only once)
+    connect(fileWatcher, &QFileSystemWatcher::fileChanged, 
+            this, &MainWindow::onFileChanged);
 
     bool atLeastOneUiSetup = false;
     atLeastOneUiSetup |= setupUiKeyboardBacklight();
@@ -41,14 +45,11 @@ bool MainWindow::setupUiKeyboardBacklight()
         ui->hsliderKeyboardBacklight->setTickInterval(1);
         ui->hsliderKeyboardBacklight->setSingleStep(1);
         connect(ui->hsliderKeyboardBacklight, &QSlider::valueChanged, this, &MainWindow::onHsliderKeyboardBacklightValueChanged);
-        // brightness_hw_changed 파일 모니터링 설정
+        // Set up monitoring for brightness_hw_changed file
         if (KeyboardBacklight::isHwChangedMonitoringSupported()) {
-            fileWatcher = new QFileSystemWatcher(this);
             QString hwChangedPath = KeyboardBacklight::getHwChangedFilePath();
             
             fileWatcher->addPath(hwChangedPath);
-            connect(fileWatcher, &QFileSystemWatcher::fileChanged, 
-                    this, &MainWindow::onBrightnessFileChanged);
         }
         return true;
     } else {
@@ -66,10 +67,7 @@ bool MainWindow::setupUiPerformanceMode()
 
         QString monitoringFilePath = PerformanceMode::getMonitoringFilePath();
         if (!monitoringFilePath.isEmpty()) {
-            fileWatcher = new QFileSystemWatcher(this);
             fileWatcher->addPath(monitoringFilePath);
-            connect(fileWatcher, &QFileSystemWatcher::fileChanged, 
-                    this, &MainWindow::onPerformanceModeFileChanged);
         }
         return true;
     } else {
@@ -80,7 +78,7 @@ bool MainWindow::setupUiPerformanceMode()
 
 bool MainWindow::setupUiBatteryChargeEndThreshold()
 {
-    // Battery Charge End Threshold 설정
+    // Battery Charge End Threshold setup
     if (BatteryChargeControl::isSupported()) {
         ui->hsliderBatteryChargeEndThreshold->setMinimum(1);
         ui->hsliderBatteryChargeEndThreshold->setMaximum(100);
@@ -92,10 +90,7 @@ bool MainWindow::setupUiBatteryChargeEndThreshold()
 
         QString monitoringFilePath = BatteryChargeControl::getMonitoringFilePath();
         if (!monitoringFilePath.isEmpty()) {
-            fileWatcher = new QFileSystemWatcher(this);
             fileWatcher->addPath(monitoringFilePath);
-            connect(fileWatcher, &QFileSystemWatcher::fileChanged, 
-                    this, &MainWindow::onBatteryChargeEndThresholdFileChanged);
         }
         return true;
     } else {
@@ -108,31 +103,27 @@ bool MainWindow::setupUiPowerOnLidOpen()
 {
     return setupUiFirmwareAttribute(power_on_lid_open, 
                                    ui->cboxPowerOnLidOpen,
-                                   &MainWindow::onCboxPowerOnLidOpenStateChanged,
-                                   &MainWindow::onPowerOnLidOpenFileChanged);
+                                   &MainWindow::onCboxPowerOnLidOpenStateChanged);
 }
 
 bool MainWindow::setupUiUsbCharging()
 {
     return setupUiFirmwareAttribute(usb_charging, 
                                    ui->cboxUsbCharging,
-                                   &MainWindow::onCboxUsbChargingStateChanged,
-                                   &MainWindow::onUsbChargingFileChanged);
+                                   &MainWindow::onCboxUsbChargingStateChanged);
 }
 
 bool MainWindow::setupUiBlockRecording()
 {
     return setupUiFirmwareAttribute(block_recording, 
                                    ui->cboxBlockRecording,
-                                   &MainWindow::onCboxBlockRecordingStateChanged,
-                                   &MainWindow::onBlockRecordingFileChanged);
+                                   &MainWindow::onCboxBlockRecordingStateChanged);
 }
 
 // Generic function to setup checkbox-based firmware attributes
 bool MainWindow::setupUiFirmwareAttribute(FirmwareAttribute& attribute, 
                                          QCheckBox* checkbox, 
-                                         void(MainWindow::*stateChangeSlot)(int),
-                                         void(MainWindow::*fileChangeSlot)(const QString&))
+                                         void(MainWindow::*stateChangeSlot)(int))
 {
     if (attribute.isSupported()) {
         checkbox->setEnabled(true);
@@ -141,12 +132,7 @@ bool MainWindow::setupUiFirmwareAttribute(FirmwareAttribute& attribute,
 
         QString monitoringFilePath = attribute.getMonitoringFilePath();
         if (!monitoringFilePath.isEmpty()) {
-            if (!fileWatcher) {
-                fileWatcher = new QFileSystemWatcher(this);
-            }
             fileWatcher->addPath(monitoringFilePath);
-            connect(fileWatcher, &QFileSystemWatcher::fileChanged, 
-                    this, fileChangeSlot);
         }
         return true;
     } else {
@@ -162,37 +148,9 @@ MainWindow::~MainWindow()
 
 void MainWindow::onHsliderKeyboardBacklightValueChanged(int value)
 {
-    // 하드웨어에서 업데이트된 경우가 아닐 때만 값 설정
+    // Only set value when not updated from hardware
     KeyboardBacklight::setBrightness(value);
     ui->statusbar->showMessage("Keyboard backlight brightness set to " + QString::number(value));
-}
-
-void MainWindow::onBrightnessFileChanged(const QString & path)
-{
-    Q_UNUSED(path);
-    
-    // 시그널을 차단하여 무한 루프 방지
-    ui->hsliderKeyboardBacklight->blockSignals(true);
-    
-    try {
-        // 현재 밝기 값을 읽어서 슬라이더 업데이트
-        int currentBrightness = KeyboardBacklight::getBrightness();
-        qDebug() << "onBrightnessFileChanged: " << currentBrightness;
-        ui->hsliderKeyboardBacklight->setValue(currentBrightness);
-        ui->statusbar->showMessage("Keyboard backlight changed to " + QString::number(currentBrightness));
-    } catch (const std::exception& e) {
-        qDebug() << "Error: " << __FUNCTION__ << " " << e.what();
-    }
-    
-    // 시그널 차단 해제
-    ui->hsliderKeyboardBacklight->blockSignals(false);
-    
-    // 파일 감시를 다시 추가 (일부 시스템에서 파일이 삭제되고 재생성될 수 있음)
-    if (fileWatcher && !fileWatcher->files().contains(path)) {
-        if (KeyboardBacklight::isHwChangedMonitoringSupported()) {
-            fileWatcher->addPath(path);
-        }
-    }
 }
 
 void MainWindow::onComboPerformanceModeCurrentTextChanged(const QString &text)
@@ -201,56 +159,9 @@ void MainWindow::onComboPerformanceModeCurrentTextChanged(const QString &text)
     ui->statusbar->showMessage("Performance mode set to " + text);
 }
 
-void MainWindow::onPerformanceModeFileChanged(const QString &path)
-{
-    Q_UNUSED(path);
-    
-    // 시그널을 차단하여 무한 루프 방지
-    ui->comboPerformanceMode->blockSignals(true);
-    
-    try {
-        QString currentPerformanceMode = PerformanceMode::getPerformanceMode();
-        ui->comboPerformanceMode->setCurrentText(currentPerformanceMode);
-        ui->statusbar->showMessage("Performance mode changed to " + currentPerformanceMode);
-    } catch (const std::exception& e) {
-        qDebug() << "Error: " << __FUNCTION__ << " " << e.what();
-    }
-    
-    // 시그널 차단 해제
-    ui->comboPerformanceMode->blockSignals(false);
-    
-    if (fileWatcher && !fileWatcher->files().contains(path)) {
-        fileWatcher->addPath(path);
-    }
-}
-
-void MainWindow::onBatteryChargeEndThresholdFileChanged(const QString &path)
-{
-    Q_UNUSED(path);
-    
-    // 시그널을 차단하여 무한 루프 방지
-    ui->hsliderBatteryChargeEndThreshold->blockSignals(true);
-    
-    try {
-        // 현재 밝기 값을 읽어서 슬라이더 업데이트
-        int currentThreshold = BatteryChargeControl::getChargeEndThreshold();
-        ui->hsliderBatteryChargeEndThreshold->setValue(currentThreshold);
-        ui->statusbar->showMessage("Battery charge end threshold changed to " + QString::number(currentThreshold));
-    } catch (const std::exception& e) {
-        qDebug() << "Error: " << __FUNCTION__ << " " << e.what();
-    }
-    
-    // 시그널 차단 해제
-    ui->hsliderBatteryChargeEndThreshold->blockSignals(false);
-    
-    // 파일 감시를 다시 추가 (일부 시스템에서 파일이 삭제되고 재생성될 수 있음)
-    if (fileWatcher && !fileWatcher->files().contains(path)) {
-        fileWatcher->addPath(path);
-    }
-}
 void MainWindow::onHsliderBatteryChargeEndThresholdValueChanged(int value)
 {
-    // 하드웨어에서 업데이트된 경우가 아닐 때만 값 설정
+    // Only set value when not updated from hardware
     BatteryChargeControl::setChargeEndThreshold(value);
     ui->statusbar->showMessage("Battery charge end threshold set to " + QString::number(value));
 }
@@ -282,19 +193,66 @@ void MainWindow::onCboxBlockRecordingStateChanged(int state)
     ui->statusbar->showMessage("Block recording set to " + QString::number(booleanValue));
 }
 
-void MainWindow::onPowerOnLidOpenFileChanged(const QString &path)
+void MainWindow::onFileChanged(const QString &path)
 {
-    handleFirmwareAttributeFileChanged(path, power_on_lid_open, ui->cboxPowerOnLidOpen, "Power on lid open");
-}
-
-void MainWindow::onUsbChargingFileChanged(const QString &path)
-{
-    handleFirmwareAttributeFileChanged(path, usb_charging, ui->cboxUsbCharging, "USB charging");
-}
-
-void MainWindow::onBlockRecordingFileChanged(const QString &path)
-{
-    handleFirmwareAttributeFileChanged(path, block_recording, ui->cboxBlockRecording, "Block recording");
+    // Determine which file was changed based on file path
+    if (KeyboardBacklight::isHwChangedMonitoringSupported() && 
+        path == KeyboardBacklight::getHwChangedFilePath()) {
+        // Handle keyboard backlight changes
+        ui->hsliderKeyboardBacklight->blockSignals(true);
+        try {
+            int currentBrightness = KeyboardBacklight::getBrightness();
+            qDebug() << "onFileChanged - Keyboard brightness: " << currentBrightness;
+            ui->hsliderKeyboardBacklight->setValue(currentBrightness);
+            ui->statusbar->showMessage("Keyboard backlight changed to " + QString::number(currentBrightness));
+        } catch (const std::exception& e) {
+            qDebug() << "Error: " << __FUNCTION__ << " brightness " << e.what();
+        }
+        ui->hsliderKeyboardBacklight->blockSignals(false);
+    }
+    else if (PerformanceMode::isSupported() && 
+             path == PerformanceMode::getMonitoringFilePath()) {
+        // Handle performance mode changes
+        ui->comboPerformanceMode->blockSignals(true);
+        try {
+            QString currentPerformanceMode = PerformanceMode::getPerformanceMode();
+            ui->comboPerformanceMode->setCurrentText(currentPerformanceMode);
+            ui->statusbar->showMessage("Performance mode changed to " + currentPerformanceMode);
+        } catch (const std::exception& e) {
+            qDebug() << "Error: " << __FUNCTION__ << " performance mode " << e.what();
+        }
+        ui->comboPerformanceMode->blockSignals(false);
+    }
+    else if (BatteryChargeControl::isSupported() && 
+             path == BatteryChargeControl::getMonitoringFilePath()) {
+        // Handle battery charge threshold changes
+        ui->hsliderBatteryChargeEndThreshold->blockSignals(true);
+        try {
+            int currentThreshold = BatteryChargeControl::getChargeEndThreshold();
+            ui->hsliderBatteryChargeEndThreshold->setValue(currentThreshold);
+            ui->statusbar->showMessage("Battery charge end threshold changed to " + QString::number(currentThreshold));
+        } catch (const std::exception& e) {
+            qDebug() << "Error: " << __FUNCTION__ << " battery threshold " << e.what();
+        }
+        ui->hsliderBatteryChargeEndThreshold->blockSignals(false);
+    }
+    else if (power_on_lid_open.isSupported() && 
+             path == power_on_lid_open.getMonitoringFilePath()) {
+        handleFirmwareAttributeFileChanged(path, power_on_lid_open, ui->cboxPowerOnLidOpen, "Power on lid open");
+    }
+    else if (usb_charging.isSupported() && 
+             path == usb_charging.getMonitoringFilePath()) {
+        handleFirmwareAttributeFileChanged(path, usb_charging, ui->cboxUsbCharging, "USB charging");
+    }
+    else if (block_recording.isSupported() && 
+             path == block_recording.getMonitoringFilePath()) {
+        handleFirmwareAttributeFileChanged(path, block_recording, ui->cboxBlockRecording, "Block recording");
+    }
+    
+    // Re-add file monitoring (file may be deleted and recreated on some systems)
+    if (!fileWatcher->files().contains(path)) {
+        fileWatcher->addPath(path);
+    }
 }
 
 // Generic function to handle hardware changes for firmware attributes
@@ -305,7 +263,7 @@ void MainWindow::handleFirmwareAttributeFileChanged(const QString &path,
 {
     Q_UNUSED(path);
     
-    // 시그널을 차단하여 무한 루프 방지
+    // Block signals to prevent infinite loop
     checkbox->blockSignals(true);
     
     try {
@@ -316,11 +274,11 @@ void MainWindow::handleFirmwareAttributeFileChanged(const QString &path,
         qDebug() << "Error: " << __FUNCTION__ << " " << e.what();
     }
     
-    // 시그널 차단 해제
+    // Unblock signals
     checkbox->blockSignals(false);
     
-    // 파일 감시를 다시 추가 (일부 시스템에서 파일이 삭제되고 재생성될 수 있음)
-    if (fileWatcher && !fileWatcher->files().contains(path)) {
+    // Re-add file monitoring (file may be deleted and recreated on some systems)
+    if (!fileWatcher->files().contains(path)) {
         fileWatcher->addPath(path);
     }
 }

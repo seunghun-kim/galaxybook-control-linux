@@ -12,7 +12,7 @@ public:
     static int getBrightness();
     static int getMaxBrightness();
     
-    // brightness_hw_changed 파일 관련 메서드들
+    // Methods related to brightness_hw_changed file
     static bool isHwChangedMonitoringSupported();
     static QString getHwChangedFilePath();
     static QString getBrightnessFilePath();
