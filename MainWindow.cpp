@@ -6,11 +6,13 @@
 #include <QFile>
 #include <QFileSystemWatcher>
 #include <QMessageBox>
+#include <functional>
+#include <algorithm>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
-    , ui(new Ui::MainWindow)
-    , fileWatcher(new QFileSystemWatcher(this))
+    , ui(new Ui::MainWindow())
+    , fileWatcher(std::make_unique<QFileSystemWatcher>(this))
     , power_on_lid_open("power_on_lid_open")
     , usb_charging("usb_charging")
     , block_recording("block_recording")
@@ -18,7 +20,7 @@ MainWindow::MainWindow(QWidget *parent)
     ui->setupUi(this);
 
     // Connect fileWatcher signal (only once)
-    connect(fileWatcher, &QFileSystemWatcher::fileChanged, 
+    connect(fileWatcher.get(), &QFileSystemWatcher::fileChanged, 
             this, &MainWindow::onFileChanged);
 
     bool atLeastOneUiSetup = false;
@@ -41,7 +43,7 @@ bool MainWindow::setupUiKeyboardBacklight()
     if (KeyboardBacklight::isSupported()) {
         ui->hsliderKeyboardBacklight->setMaximum(KeyboardBacklight::getMaxBrightness());
         ui->hsliderKeyboardBacklight->setValue(KeyboardBacklight::getBrightness());
-        ui->hsliderKeyboardBacklight->setTickPosition(QSlider::TicksAbove);
+        ui->hsliderKeyboardBacklight->setTickPosition(QSlider::TicksBelow);
         ui->hsliderKeyboardBacklight->setTickInterval(1);
         ui->hsliderKeyboardBacklight->setSingleStep(1);
         connect(ui->hsliderKeyboardBacklight, &QSlider::valueChanged, this, &MainWindow::onHsliderKeyboardBacklightValueChanged);
@@ -80,12 +82,16 @@ bool MainWindow::setupUiBatteryChargeEndThreshold()
 {
     // Battery Charge End Threshold setup
     if (BatteryChargeControl::isSupported()) {
-        ui->hsliderBatteryChargeEndThreshold->setMinimum(1);
+        ui->hsliderBatteryChargeEndThreshold->setMinimum(30);
         ui->hsliderBatteryChargeEndThreshold->setMaximum(100);
-        ui->hsliderBatteryChargeEndThreshold->setValue(BatteryChargeControl::getChargeEndThreshold());
+        
+        int currentThreshold = BatteryChargeControl::getChargeEndThreshold();
+        int adjustedThreshold = std::max(30, (currentThreshold / 10) * 10);
+        ui->hsliderBatteryChargeEndThreshold->setValue(adjustedThreshold);
+        
         ui->hsliderBatteryChargeEndThreshold->setTickPosition(QSlider::TicksBelow);
         ui->hsliderBatteryChargeEndThreshold->setTickInterval(10);
-        ui->hsliderBatteryChargeEndThreshold->setSingleStep(1);
+        ui->hsliderBatteryChargeEndThreshold->setSingleStep(10);
         connect(ui->hsliderBatteryChargeEndThreshold, &QSlider::valueChanged, this, &MainWindow::onHsliderBatteryChargeEndThresholdValueChanged);
 
         QString monitoringFilePath = BatteryChargeControl::getMonitoringFilePath();
@@ -102,33 +108,33 @@ bool MainWindow::setupUiBatteryChargeEndThreshold()
 bool MainWindow::setupUiPowerOnLidOpen()
 {
     return setupUiFirmwareAttribute(power_on_lid_open, 
-                                   ui->cboxPowerOnLidOpen,
-                                   &MainWindow::onCboxPowerOnLidOpenStateChanged);
+                                   *ui->cboxPowerOnLidOpen,
+                                   [this](int state) { onCboxPowerOnLidOpenStateChanged(state); });
 }
 
 bool MainWindow::setupUiUsbCharging()
 {
     return setupUiFirmwareAttribute(usb_charging, 
-                                   ui->cboxUsbCharging,
-                                   &MainWindow::onCboxUsbChargingStateChanged);
+                                   *ui->cboxUsbCharging,
+                                   [this](int state) { onCboxUsbChargingStateChanged(state); });
 }
 
 bool MainWindow::setupUiBlockRecording()
 {
     return setupUiFirmwareAttribute(block_recording, 
-                                   ui->cboxBlockRecording,
-                                   &MainWindow::onCboxBlockRecordingStateChanged);
+                                   *ui->cboxBlockRecording,
+                                   [this](int state) { onCboxBlockRecordingStateChanged(state); });
 }
 
 // Generic function to setup checkbox-based firmware attributes
 bool MainWindow::setupUiFirmwareAttribute(FirmwareAttribute& attribute, 
-                                         QCheckBox* checkbox, 
-                                         void(MainWindow::*stateChangeSlot)(int))
+                                         QCheckBox& checkbox, 
+                                         std::function<void(int)> stateChangeSlot)
 {
     if (attribute.isSupported()) {
-        checkbox->setEnabled(true);
-        checkbox->setChecked(attribute.get());
-        connect(checkbox, &QCheckBox::checkStateChanged, this, stateChangeSlot);
+        checkbox.setEnabled(true);
+        checkbox.setChecked(attribute.get());
+        connect(&checkbox, &QCheckBox::checkStateChanged, this, stateChangeSlot);
 
         QString monitoringFilePath = attribute.getMonitoringFilePath();
         if (!monitoringFilePath.isEmpty()) {
@@ -136,7 +142,7 @@ bool MainWindow::setupUiFirmwareAttribute(FirmwareAttribute& attribute,
         }
         return true;
     } else {
-        checkbox->setEnabled(false);
+        checkbox.setEnabled(false);
         return false;
     }
 }
@@ -162,8 +168,16 @@ void MainWindow::onComboPerformanceModeCurrentTextChanged(const QString &text)
 void MainWindow::onHsliderBatteryChargeEndThresholdValueChanged(int value)
 {
     // Only set value when not updated from hardware
-    BatteryChargeControl::setChargeEndThreshold(value);
-    ui->statusbar->showMessage("Battery charge end threshold set to " + QString::number(value));
+    int adjustedValue = std::max(30, (value / 10) * 10);
+    
+    if (value != adjustedValue) {
+        ui->hsliderBatteryChargeEndThreshold->blockSignals(true);
+        ui->hsliderBatteryChargeEndThreshold->setValue(adjustedValue);
+        ui->hsliderBatteryChargeEndThreshold->blockSignals(false);
+    }
+    
+    BatteryChargeControl::setChargeEndThreshold(adjustedValue);
+    ui->statusbar->showMessage("Battery charge end threshold set to " + QString::number(adjustedValue) + "%");
 }
 
 void MainWindow::onCboxPowerOnLidOpenStateChanged(int state)
@@ -229,8 +243,9 @@ void MainWindow::onFileChanged(const QString &path)
         ui->hsliderBatteryChargeEndThreshold->blockSignals(true);
         try {
             int currentThreshold = BatteryChargeControl::getChargeEndThreshold();
-            ui->hsliderBatteryChargeEndThreshold->setValue(currentThreshold);
-            ui->statusbar->showMessage("Battery charge end threshold changed to " + QString::number(currentThreshold));
+            int adjustedThreshold = std::max(30, (currentThreshold / 10) * 10);
+            ui->hsliderBatteryChargeEndThreshold->setValue(adjustedThreshold);
+            ui->statusbar->showMessage("Battery charge end threshold changed to " + QString::number(currentThreshold) + "%");
         } catch (const std::exception& e) {
             qDebug() << "Error: " << __FUNCTION__ << " battery threshold " << e.what();
         }
@@ -238,15 +253,15 @@ void MainWindow::onFileChanged(const QString &path)
     }
     else if (power_on_lid_open.isSupported() && 
              path == power_on_lid_open.getMonitoringFilePath()) {
-        handleFirmwareAttributeFileChanged(path, power_on_lid_open, ui->cboxPowerOnLidOpen, "Power on lid open");
+        handleFirmwareAttributeFileChanged(path, power_on_lid_open, *ui->cboxPowerOnLidOpen, "Power on lid open");
     }
     else if (usb_charging.isSupported() && 
              path == usb_charging.getMonitoringFilePath()) {
-        handleFirmwareAttributeFileChanged(path, usb_charging, ui->cboxUsbCharging, "USB charging");
+        handleFirmwareAttributeFileChanged(path, usb_charging, *ui->cboxUsbCharging, "USB charging");
     }
     else if (block_recording.isSupported() && 
              path == block_recording.getMonitoringFilePath()) {
-        handleFirmwareAttributeFileChanged(path, block_recording, ui->cboxBlockRecording, "Block recording");
+        handleFirmwareAttributeFileChanged(path, block_recording, *ui->cboxBlockRecording, "Block recording");
     }
     
     // Re-add file monitoring (file may be deleted and recreated on some systems)
@@ -258,24 +273,24 @@ void MainWindow::onFileChanged(const QString &path)
 // Generic function to handle hardware changes for firmware attributes
 void MainWindow::handleFirmwareAttributeFileChanged(const QString &path, 
                                                   FirmwareAttribute& attribute,
-                                                  QCheckBox* checkbox,
+                                                  QCheckBox& checkbox,
                                                   const QString& featureName)
 {
     Q_UNUSED(path);
     
     // Block signals to prevent infinite loop
-    checkbox->blockSignals(true);
+    checkbox.blockSignals(true);
     
     try {
         int currentValue = attribute.get();
-        checkbox->setChecked(currentValue != 0);
+        checkbox.setChecked(currentValue != 0);
         ui->statusbar->showMessage(featureName + " changed to " + QString::number(currentValue));
     } catch (const std::exception& e) {
         qDebug() << "Error: " << __FUNCTION__ << " " << e.what();
     }
     
     // Unblock signals
-    checkbox->blockSignals(false);
+    checkbox.blockSignals(false);
     
     // Re-add file monitoring (file may be deleted and recreated on some systems)
     if (!fileWatcher->files().contains(path)) {

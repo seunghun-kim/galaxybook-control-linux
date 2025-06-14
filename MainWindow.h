@@ -4,6 +4,8 @@
 #include <QMainWindow>
 #include <QFileSystemWatcher>
 #include <QCheckBox>
+#include <memory>
+#include <functional>
 #include "FirmwareAttribute.h"
 
 QT_BEGIN_NAMESPACE
@@ -34,7 +36,7 @@ public slots:
 
 private:
     Ui::MainWindow *ui;
-    QFileSystemWatcher *fileWatcher;
+    std::unique_ptr<QFileSystemWatcher> fileWatcher;
 
     FirmwareAttribute power_on_lid_open;
     FirmwareAttribute usb_charging;
@@ -49,13 +51,13 @@ private:
 
     // Generic function to setup checkbox-based firmware attributes
     bool setupUiFirmwareAttribute(FirmwareAttribute& attribute, 
-                                 QCheckBox* checkbox, 
-                                 void(MainWindow::*stateChangeSlot)(int));
+                                 QCheckBox& checkbox, 
+                                 std::function<void(int)> stateChangeSlot);
     
     // Generic function to handle file changes for firmware attributes
     void handleFirmwareAttributeFileChanged(const QString &path, 
-                                         FirmwareAttribute& attribute,
-                                         QCheckBox* checkbox,
-                                         const QString& featureName);
+                                          FirmwareAttribute& attribute,
+                                          QCheckBox& checkbox,
+                                          const QString& featureName);
 };
 #endif // MAINWINDOW_H
